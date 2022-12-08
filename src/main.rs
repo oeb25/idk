@@ -29,8 +29,8 @@ fn main() -> miette::Result<()> {
                     .with_context(|| format!("Trying to read {path:?}"))?,
             )?;
 
-            eprintln!("Parsed input:");
-            eprintln!("  {}", facts.iter().format("\n  "));
+            println!("Parsed input:");
+            println!("  {}", facts.iter().format("\n  "));
 
             prob::start(&facts)?;
         }

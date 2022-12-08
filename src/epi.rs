@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 
-use crate::epi_ast::{Agent, Document, DocumentItem, Node, RelationType, Term};
+use crate::{
+    common::Ident,
+    epi_ast::{Agent, Document, DocumentItem, Node, RelationType, Term},
+};
 
 pub fn run(doc: Document) {
     let mut model = Model::default();
@@ -70,7 +73,61 @@ impl Model {
             TK::Boolean(b) => *b,
             TK::Var(_) => {
                 if let Some(ns) = self.nodes.get(&n) {
-                    ns.facts.iter().any(|f| f.as_ref() == t)
+                    if ns.facts.iter().any(|p| p.as_ref() == t) {
+                        return true;
+                    }
+                    if ns
+                        .facts
+                        .iter()
+                        .any(|p| p == &TK::Neg(Box::new(t.clone())).parsed(0, 0))
+                    {
+                        return false;
+                    }
+
+                    let cfg = z3::Config::new();
+                    let ctx = z3::Context::new(&cfg);
+
+                    let solver = z3::Solver::new(&ctx);
+
+                    let pre = ns
+                        .facts
+                        .iter()
+                        .map(|f| f.to_z3(&ctx))
+                        .fold(None, |a, b| {
+                            if let Some(a) = a {
+                                Some(a & b)
+                            } else {
+                                Some(b)
+                            }
+                        })
+                        .unwrap_or_else(|| z3::ast::Bool::from_bool(&ctx, true));
+
+                    let cond = pre.implies(&t.to_z3(&ctx));
+
+                    let all_vars: HashSet<_> = ns
+                        .facts
+                        .iter()
+                        .flat_map(|fact| fact.all_vars())
+                        .chain(t.all_vars())
+                        .collect();
+
+                    let bounds: Vec<Box<dyn z3::ast::Ast>> = all_vars
+                        .iter()
+                        .map(|v| -> Box<dyn z3::ast::Ast> {
+                            Box::new(z3::ast::Bool::new_const(&ctx, v.text()))
+                        })
+                        .collect();
+
+                    let actual = z3::ast::forall_const(
+                        &ctx,
+                        &bounds.iter().map(|a| a.as_ref()).collect_vec(),
+                        &[],
+                        &cond,
+                    );
+
+                    solver.assert(&actual);
+
+                    solver.check() == z3::SatResult::Sat
                 } else {
                     false
                 }
@@ -136,6 +193,41 @@ impl Model {
                 } else {
                     true
                 }
+            }
+        }
+    }
+}
+
+impl Term {
+    fn to_z3<'ctx>(&self, ctx: &'ctx z3::Context) -> z3::ast::Bool<'ctx> {
+        use crate::epi_ast::TermKind as TK;
+        use z3::ast::Bool;
+
+        match &self.kind {
+            TK::Boolean(b) => Bool::from_bool(ctx, *b),
+            TK::Var(p) => Bool::new_const(ctx, p.text()),
+            TK::Neg(b) => !b.to_z3(ctx),
+            TK::Con(l, r) => l.to_z3(ctx) | r.to_z3(ctx),
+            TK::Dis(l, r) => l.to_z3(ctx) & r.to_z3(ctx),
+            TK::Imp(l, r) => l.to_z3(ctx).implies(&r.to_z3(ctx)),
+            TK::K(_, _) | TK::C(_, _) | TK::E(_, _) | TK::EBounded(_, _, _) | TK::D(_, _) => {
+                todo!("Could not convert {self} to z3")
+            }
+        }
+    }
+
+    fn all_vars(&self) -> HashSet<Ident> {
+        use crate::epi_ast::TermKind as TK;
+
+        match &self.kind {
+            TK::Boolean(_) => Default::default(),
+            TK::Var(v) => [*v].into_iter().collect(),
+            TK::Neg(i) => i.all_vars(),
+            TK::K(_, i) | TK::C(_, i) | TK::E(_, i) | TK::EBounded(_, _, i) | TK::D(_, i) => {
+                i.all_vars()
+            }
+            TK::Con(l, r) | TK::Dis(l, r) | TK::Imp(l, r) => {
+                l.all_vars().union(&r.all_vars()).copied().collect()
             }
         }
     }

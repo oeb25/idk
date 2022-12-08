@@ -47,17 +47,16 @@ impl<'a> Probability<'a> {
             &Sort::real(ctx),
         );
 
-        let p = Self {
+        Self {
             ctx,
             names,
             all,
             m_fun,
             bel_fun,
             plaus_fun,
-        };
-
-        p
+        }
     }
+    #[allow(unused)]
     fn new_const<const N: usize>(
         ctx: &'a Context,
         names: [impl Into<String>; N],
@@ -272,7 +271,7 @@ fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
 
     let table = p.table(model);
 
-    eprintln!("{table}");
+    println!("{table}");
 
     Ok(())
 }

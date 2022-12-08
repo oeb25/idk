@@ -50,14 +50,6 @@ pub enum ParseError {
         err_span: Span,
         expected: String,
     },
-    #[error("Assignment of non-function expression to multiple variable")]
-    #[diagnostic(help("Only methods allow assignment to multiple variables"))]
-    ExprAssignmentToMultipleVars {
-        #[source_code]
-        src: String,
-        #[label = "The assignment to multiple variables occurs here, but only one is allowed"]
-        err_span: Span,
-    },
 }
 
 impl ParseError {
@@ -88,15 +80,7 @@ impl ParseError {
                 }
             }
             lalrpop_util::ParseError::ExtraToken { .. } => todo!(),
-            lalrpop_util::ParseError::User { error } => match error {
-                ParseError::ExprAssignmentToMultipleVars { err_span, .. } => {
-                    ParseError::ExprAssignmentToMultipleVars {
-                        src: prep_src(),
-                        err_span,
-                    }
-                }
-                _ => error,
-            },
+            lalrpop_util::ParseError::User { error } => error,
         }
     }
 }
