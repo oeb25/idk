@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use comfy_table::Table;
 use itertools::Itertools;
 use z3::{
@@ -14,153 +16,256 @@ pub fn start(facts: &[Fact]) -> miette::Result<()> {
     Ok(())
 }
 
+struct FnGroup<'a> {
+    m: FuncDecl<'a>,
+    bel: FuncDecl<'a>,
+    plaus: FuncDecl<'a>,
+}
+
 struct Probability<'a> {
     ctx: &'a Context,
+    suffixes: Vec<&'static str>,
     names: Vec<String>,
-    all: Vec<BV<'a>>,
-    m_fun: FuncDecl<'a>,
-    bel_fun: FuncDecl<'a>,
-    plaus_fun: FuncDecl<'a>,
+    all: Vec<(u64, BV<'a>)>,
+    fns: HashMap<&'static str, FnGroup<'a>>,
 }
 
 impl<'a> Probability<'a> {
-    fn new(ctx: &'a Context, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    fn new(
+        ctx: &'a Context,
+        suffixes: impl IntoIterator<Item = &'static str>,
+        names: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         let names = names.into_iter().map(|n| n.into()).collect_vec();
         let n = names.len();
 
-        let all = (0..1i64 << n)
+        let all = (0..1u64 << n)
             .sorted_by_key(|s| s.count_ones())
-            .map(|f| BV::from_i64(ctx, f, n as _))
+            .map(|f| (f, BV::from_u64(ctx, f, n as _)))
             .collect_vec();
 
-        let m_fun = FuncDecl::new(ctx, "m", &[&Sort::bitvector(ctx, n as _)], &Sort::real(ctx));
-        let bel_fun = FuncDecl::new(
-            ctx,
-            "Bel",
-            &[&Sort::bitvector(ctx, n as _)],
-            &Sort::real(ctx),
-        );
-        let plaus_fun = FuncDecl::new(
-            ctx,
-            "Plaus",
-            &[&Sort::bitvector(ctx, n as _)],
-            &Sort::real(ctx),
-        );
+        let mut fns = HashMap::new();
+        let suffixes = suffixes.into_iter().collect_vec();
+
+        for &suffix in &suffixes {
+            fns.insert(suffix, create_fn_group(ctx, n, suffix));
+        }
 
         Self {
             ctx,
             names,
+            suffixes,
             all,
-            m_fun,
-            bel_fun,
-            plaus_fun,
+            fns,
         }
     }
-    #[allow(unused)]
-    fn new_const<const N: usize>(
-        ctx: &'a Context,
-        names: [impl Into<String>; N],
-    ) -> (Self, [BV<'a>; N]) {
-        let all = (0..1i64 << N)
-            .sorted_by_key(|s| s.count_ones())
-            .map(|f| BV::from_i64(ctx, f, N as _))
-            .collect_vec();
-
-        let m_fun = FuncDecl::new(ctx, "m", &[&Sort::bitvector(ctx, N as _)], &Sort::real(ctx));
-        let bel_fun = FuncDecl::new(
-            ctx,
-            "Bel",
-            &[&Sort::bitvector(ctx, N as _)],
-            &Sort::real(ctx),
-        );
-        let plaus_fun = FuncDecl::new(
-            ctx,
-            "Plaus",
-            &[&Sort::bitvector(ctx, N as _)],
-            &Sort::real(ctx),
-        );
-
-        let p = Self {
-            ctx,
-            names: names.map(|n| n.into()).to_vec(),
-            all,
-            m_fun,
-            bel_fun,
-            plaus_fun,
-        };
-
-        (
-            p,
-            std::array::from_fn(|x| BV::from_i64(ctx, 1 << x, N as _)),
-        )
-    }
-
     fn n(&self) -> u32 {
         self.names.len() as _
     }
+    fn all(&self) -> impl Iterator<Item = (u64, &BV)> {
+        self.all.iter().map(|(idx, bv)| (*idx, bv))
+    }
+    fn all_bv(&self) -> impl Iterator<Item = &BV> {
+        self.all.iter().map(|(_, bv)| bv)
+    }
 
-    fn assert_preamble(&self, solver: &Solver<'a>) {
+    fn assert_preamble_for(&self, solver: &Solver<'a>, suffix: &str) {
         solver.assert(
             &self
-                .all
-                .iter()
-                .map(|x| self.m(x))
+                .all_bv()
+                .map(|x| self.m(suffix, x))
                 .fold(real(self.ctx, 0.0), |a, b| a + b)
                 ._eq(&real(self.ctx, 1.0)),
         );
-        let x = BV::new_const(self.ctx, "x", 3);
-        solver.assert(&z3::ast::forall_const(
-            self.ctx,
-            &[&x],
-            &[],
-            &self
-                .plaus(&x)
-                ._eq(&self.all.iter().fold(real(self.ctx, 0.0), |a, b| {
-                    a + (b & &x)
-                        ._eq(&BV::from_i64(self.ctx, 0, 3))
-                        .ite(&real(self.ctx, 0.0), &self.m(b))
-                })),
-        ));
-        solver.assert(&z3::ast::forall_const(
-            self.ctx,
-            &[&x],
-            &[],
-            &self.plaus(&x)._eq(&(real(self.ctx, 1.0) - self.bel(&!&x))),
-        ));
+
         solver.assert(
             &self
-                .bel(&BV::from_i64(self.ctx, (1 << self.n()) - 1, self.n() as _))
+                .all_bv()
+                .map(|x| {
+                    self.m(suffix, x).ge(&real(self.ctx, 0.0))
+                        & self.m(suffix, x).le(&real(self.ctx, 1.0))
+                })
+                .reduce(|a, b| a & b)
+                .unwrap(),
+        );
+
+        let x = BV::new_const(self.ctx, "x", self.n());
+        solver.assert(&z3::ast::forall_const(
+            self.ctx,
+            &[&x],
+            &[],
+            &self
+                .plaus(suffix, &x)
+                ._eq(&self.all_bv().fold(real(self.ctx, 0.0), |a, b| {
+                    a + (b & &x)
+                        ._eq(&BV::from_i64(self.ctx, 0, self.n()))
+                        .ite(&real(self.ctx, 0.0), &self.m(suffix, b))
+                })),
+        ));
+
+        solver.assert(&z3::ast::forall_const(
+            self.ctx,
+            &[&x],
+            &[],
+            &self
+                .bel(suffix, &x)
+                ._eq(&self.all_bv().fold(real(self.ctx, 0.0), |a, b| {
+                    a + (b & &x)
+                        ._eq(&b)
+                        .ite(&self.m(suffix, b), &real(self.ctx, 0.0))
+                })),
+        ));
+
+        solver.assert(&z3::ast::forall_const(
+            self.ctx,
+            &[&x],
+            &[],
+            &self
+                .plaus(suffix, &x)
+                ._eq(&(real(self.ctx, 1.0) - self.bel(suffix, &!&x))),
+        ));
+
+        solver.assert(
+            &self
+                .bel(
+                    suffix,
+                    &BV::from_i64(self.ctx, (1 << self.n()) - 1, self.n() as _),
+                )
                 ._eq(&real(self.ctx, 1.0)),
         );
+
+        solver.assert(
+            &self
+                .m(suffix, &BV::from_i64(self.ctx, 0, self.n()))
+                ._eq(&real(self.ctx, 0.0)),
+        );
+    }
+    fn assert_preamble(&self, solver: &Solver<'a>) {
+        for suf in &self.suffixes {
+            self.assert_preamble_for(solver, suf);
+        }
     }
 
-    fn m(&self, x: &BV<'a>) -> Real {
-        self.m_fun.apply(&[x]).as_real().unwrap()
-    }
-    fn bel(&self, x: &BV<'a>) -> Real {
-        self.bel_fun.apply(&[x]).as_real().unwrap()
-    }
-    fn plaus(&self, x: &BV<'a>) -> Real {
-        self.plaus_fun.apply(&[x]).as_real().unwrap()
+    fn compute_combination(
+        &mut self,
+        solver: &Solver<'a>,
+        model: &Model,
+        a: &str,
+        b: &str,
+    ) -> &'static str {
+        let ab = crate::str_intern::intern(&format!("{a},{b}"));
+
+        let g = create_fn_group(self.ctx, self.n() as _, ab);
+
+        let all_pairs = self
+            .all()
+            .filter(|x| x.0 != 0)
+            .combinations_with_replacement(2)
+            .flat_map(|xs| {
+                if xs[0].0 == xs[1].0 {
+                    vec![(xs[0], xs[1])]
+                } else {
+                    vec![(xs[0], xs[1]), (xs[1], xs[0])]
+                }
+            })
+            .collect_vec();
+
+        let k = all_pairs
+            .iter()
+            .filter_map(|(l, r)| {
+                if (l.0 & r.0) == 0 {
+                    Some(
+                        self.compute_m(model, a, l.1).unwrap()
+                            * self.compute_m(model, b, r.1).unwrap(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .reduce(|l, r| l + r)
+            .unwrap_or(0.0);
+
+        for (u, u_bv) in self.all().filter(|x| x.0 != 0) {
+            let body = all_pairs
+                .iter()
+                .filter_map(|(l, r)| {
+                    let res = l.0 & r.0;
+                    if res != 0 {
+                        if res == u {
+                            Some(
+                                self.compute_m(model, a, l.1).unwrap()
+                                    * self.compute_m(model, b, r.1).unwrap(),
+                            )
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .reduce(|l, r| l + r)
+                .unwrap_or(0.0);
+
+            let result = 1.0 / (1.0 - k) * body;
+
+            solver.assert(&g.m(u_bv)._eq(&real(self.ctx, result)));
+        }
+
+        self.fns.insert(ab, g);
+        self.assert_preamble_for(solver, ab);
+
+        ab
     }
 
-    fn table(&self, model: Model) -> Table {
+    fn m(&self, suffix: &str, x: &BV<'a>) -> Real {
+        self.fns[suffix].m(x)
+    }
+    fn bel(&self, suffix: &str, x: &BV<'a>) -> Real {
+        self.fns[suffix].bel(x)
+    }
+    fn plaus(&self, suffix: &str, x: &BV<'a>) -> Real {
+        self.fns[suffix].plaus(x)
+    }
+
+    fn compute_m(&self, model: &Model, suffix: &str, x: &BV) -> Option<f64> {
+        let res = model.eval(&self.m(suffix, x), true)?;
+        real_to_f64(&res)
+    }
+    fn compute_bel(&self, model: &Model, suffix: &str, x: &BV) -> Option<f64> {
+        let res = model.eval(&self.bel(suffix, x), true)?;
+        real_to_f64(&res)
+    }
+    fn compute_plaus(&self, model: &Model, suffix: &str, x: &BV) -> Option<f64> {
+        let res = model.eval(&self.plaus(suffix, x), true)?;
+        real_to_f64(&res)
+    }
+
+    fn compute_name(&self, idx: u64) -> String {
+        self.names
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| if idx & (1 << i) == 0 { None } else { Some(n) })
+            .format(",")
+            .to_string()
+    }
+
+    fn table(&self, suffix: &str, model: &Model) -> Table {
         let mut table = Table::new();
-        table.set_header(["X", "m(X)", "Bel(X)", "Plaus(X)"]);
+        table.set_header([
+            "X".to_string(),
+            format!("m{suffix}(X)"),
+            format!("Bel{suffix}(X)"),
+            format!("Plaus{suffix}(X)"),
+        ]);
 
         for idx in (1..1i64 << self.n()).sorted_by_key(|s| s.count_ones()) {
-            let eval = |x| real_to_f64(&model.eval(&x, true).unwrap()).unwrap();
+            let bv = BV::from_i64(self.ctx, idx, self.n());
 
             table.add_row([
-                self.names
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, n)| if idx & (1 << i) == 0 { None } else { Some(n) })
-                    .format(",")
-                    .to_string(),
-                eval(self.m(&BV::from_i64(self.ctx, idx, self.n()))).to_string(),
-                eval(self.bel(&BV::from_i64(self.ctx, idx, self.n()))).to_string(),
-                eval(self.plaus(&BV::from_i64(self.ctx, idx, self.n()))).to_string(),
+                self.compute_name(idx as _),
+                self.compute_m(model, suffix, &bv).unwrap().to_string(),
+                self.compute_bel(model, suffix, &bv).unwrap().to_string(),
+                self.compute_plaus(model, suffix, &bv).unwrap().to_string(),
             ]);
         }
 
@@ -173,7 +278,7 @@ impl<'a> Probability<'a> {
             .iter()
             .position(|p| p == n)
             .ok_or(miette::miette!(
-                "Agent by the name '{n}' does not exists. Possible agents are '{}'",
+                "Agent by the name '{n}' does not exists. Possible states are '{}'",
                 self.names.iter().format(", ")
             ))?;
         Ok(BV::from_i64(self.ctx, 1 << idx, self.n()))
@@ -188,52 +293,93 @@ impl<'a> Probability<'a> {
     fn assert_m<'b>(
         &self,
         solver: &Solver<'a>,
+        suffix: &str,
         group: impl IntoIterator<Item = &'b str>,
         f: f64,
     ) -> miette::Result<()> {
         let bv = self.bv_for_group(group)?;
-        solver.assert(&self.m(&bv)._eq(&real(self.ctx, f)));
+        solver.assert(&self.m(suffix, &bv)._eq(&real(self.ctx, f)));
         Ok(())
     }
 
     fn assert_bel<'b>(
         &self,
         solver: &Solver<'a>,
+        suffix: &str,
         group: impl IntoIterator<Item = &'b str>,
         f: f64,
     ) -> miette::Result<()> {
         let bv = self.bv_for_group(group)?;
-        solver.assert(&self.bel(&bv)._eq(&real(self.ctx, f)));
+        solver.assert(&self.bel(suffix, &bv)._eq(&real(self.ctx, f)));
         Ok(())
     }
 
     fn assert_plaus<'b>(
         &self,
         solver: &Solver<'a>,
+        suffix: &str,
         group: impl IntoIterator<Item = &'b str>,
         f: f64,
     ) -> miette::Result<()> {
         let bv = self.bv_for_group(group)?;
-        solver.assert(&self.plaus(&bv)._eq(&real(self.ctx, f)));
+        solver.assert(&self.plaus(suffix, &bv)._eq(&real(self.ctx, f)));
         Ok(())
     }
 }
 
-fn real(ctx: &Context, f: f64) -> Real {
+impl<'a> FnGroup<'a> {
+    fn m(&self, x: &BV<'a>) -> Real {
+        self.m.apply(&[x]).as_real().unwrap()
+    }
+    fn bel(&self, x: &BV<'a>) -> Real {
+        self.bel.apply(&[x]).as_real().unwrap()
+    }
+    fn plaus(&self, x: &BV<'a>) -> Real {
+        self.plaus.apply(&[x]).as_real().unwrap()
+    }
+}
+
+fn create_fn_group<'a>(ctx: &'a Context, n: usize, suffix: &str) -> FnGroup<'a> {
+    let m = FuncDecl::new(
+        ctx,
+        format!("m{suffix}"),
+        &[&Sort::bitvector(ctx, n as _)],
+        &Sort::real(ctx),
+    );
+    let bel = FuncDecl::new(
+        ctx,
+        format!("bel{suffix}"),
+        &[&Sort::bitvector(ctx, n as _)],
+        &Sort::real(ctx),
+    );
+    let plaus = FuncDecl::new(
+        ctx,
+        format!("plaus{suffix}"),
+        &[&Sort::bitvector(ctx, n as _)],
+        &Sort::real(ctx),
+    );
+    FnGroup { m, bel, plaus }
+}
+
+fn real<'ctx>(ctx: &'ctx Context, f: f64) -> Real<'ctx> {
     let (a, b) = approximate_rational(f);
     Real::from_real(ctx, a, b)
 }
 fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
+    let mut suffixes = HashSet::new();
     let mut sort_order = None;
 
     let mut states = facts
         .iter()
         .flat_map(|f| match f {
-            Fact::Agents(agents) => {
-                sort_order = Some(agents.clone());
-                agents
+            Fact::States(states) => {
+                sort_order = Some(states.clone());
+                &states.0
             }
-            Fact::M(agents, _) | Fact::Bel(agents, _) | Fact::Plaus(agents, _) => &agents.0,
+            Fact::M(suf, states, _) | Fact::Bel(suf, states, _) | Fact::Plaus(suf, states, _) => {
+                suffixes.insert(suf.text());
+                &states.0
+            }
         })
         .copied()
         .map(|s| s.0.text())
@@ -247,31 +393,49 @@ fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
         states.dedup();
     }
 
-    let p = Probability::new(ctx, states);
+    let mut p = Probability::new(ctx, suffixes.iter().copied(), states);
 
     let solver = Solver::new(ctx);
-    p.assert_preamble(&solver);
 
     for f in facts {
         match f {
-            Fact::Agents(_) => {}
-            Fact::M(states, f) => p.assert_m(&solver, states.0.iter().map(|s| s.0.text()), *f)?,
-            Fact::Bel(states, f) => {
-                p.assert_bel(&solver, states.0.iter().map(|s| s.0.text()), *f)?
+            Fact::States(_) => {}
+            Fact::M(suffix, states, f) => {
+                p.assert_m(&solver, suffix, states.0.iter().map(|s| s.0.text()), *f)?
             }
-            Fact::Plaus(states, f) => {
-                p.assert_plaus(&solver, states.0.iter().map(|s| s.0.text()), *f)?
+            Fact::Bel(suffix, states, f) => {
+                p.assert_bel(&solver, suffix, states.0.iter().map(|s| s.0.text()), *f)?
+            }
+            Fact::Plaus(suffix, states, f) => {
+                p.assert_plaus(&solver, suffix, states.0.iter().map(|s| s.0.text()), *f)?
             }
         }
     }
 
+    p.assert_preamble(&solver);
     dbg!(solver.check());
 
-    let model = solver.get_model().unwrap();
+    let model = solver.get_model().expect("no model generated");
 
-    let table = p.table(model);
+    for suf in &p.suffixes {
+        let table = p.table(suf, &model);
+        println!("{table}");
+    }
 
-    println!("{table}");
+    for (a, b) in p
+        .suffixes
+        .iter()
+        .copied()
+        .tuple_combinations()
+        .collect_vec()
+    {
+        let ab = p.compute_combination(&solver, &model, a, b);
+        dbg!(solver.check());
+        let model = solver.get_model().expect("no model generated");
+        println!("Computed combination of {a} and {b}");
+        let table = p.table(ab, &model);
+        println!("{table}");
+    }
 
     Ok(())
 }

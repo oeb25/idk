@@ -1,3 +1,5 @@
+use std::collections::btree_map::Range;
+
 use crate::str_intern;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -98,6 +100,12 @@ impl Ident {
     // pub fn var(self, ty: Type) -> &'static Expr {
     //     Expr::Var(self).register(ty, self.span, None)
     // }
+    pub fn skip(self, n: usize) -> Ident {
+        Ident::new(
+            &self.text()[n..],
+            Span::start_len(self.span.start() + n, self.span.len() - n),
+        )
+    }
 }
 impl std::hash::Hash for Ident {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

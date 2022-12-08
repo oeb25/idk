@@ -148,15 +148,24 @@ impl Setting {
             })
     }
 
-    fn pareto_optimum(&self) -> impl Iterator<Item = CellView> {
-        self.cells().filter(|c1| {
-            // If there is no outcome that every agent finds at least as
-            // good and at least one agent finds better
-            !self.cells().filter(|c2| c2 != c1).any(|c2| {
+    fn pareto_improvements(&self, row: usize, col: usize) -> impl Iterator<Item = CellView> {
+        let c1 = self.cell_at(row, col);
+
+        self.cells().filter(move |c2| {
+            if &c1 != c2 {
                 (c2.cell.0 >= c1.cell.0 && c2.cell.1 >= c1.cell.1)
                     && (c2.cell.0 > c1.cell.0 || c2.cell.1 > c1.cell.1)
-            })
+            } else {
+                false
+            }
         })
+    }
+
+    fn pareto_optimum(&self) -> impl Iterator<Item = CellView> {
+        // If there is no outcome that every agent finds at least as
+        // good and at least one agent finds better
+        self.cells()
+            .filter(|c1| self.pareto_improvements(c1.row, c1.col).count() == 0)
     }
 
     fn cell_at(&self, row: usize, col: usize) -> CellView {
@@ -259,6 +268,26 @@ pub fn run(src: &str) -> miette::Result<()> {
             .map(|c| format!("({},{})", c.row_strategy, c.col_strategy))
             .format(", ")
     );
+
+    println!();
+    println!("{}", Paint::yellow("Computing pareto improvements:"));
+
+    for c in setting.cells() {
+        let imp = setting
+            .pareto_improvements(c.row, c.col)
+            .filter(|c| setting.is_nash(c.row, c.col) == (true, true))
+            .map(|c| format!("({},{})", c.row_strategy, c.col_strategy))
+            .join(", ");
+
+        if imp.is_empty() {
+            println!(
+                "  ({},{}): has no improvements",
+                c.row_strategy, c.col_strategy
+            );
+        } else {
+            println!("  ({},{}): {imp}", c.row_strategy, c.col_strategy)
+        }
+    }
 
     println!();
     println!(

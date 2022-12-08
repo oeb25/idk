@@ -1,0 +1,17 @@
+States: {Red,Yellow,Green}
+
+m1({Red}) = 0.35
+m1({Yellow}) = 0.25
+m1({Green}) = 0.15
+Bel1({Red, Yellow}) = 0.66
+m1({Red, Green}) = 0.05
+Plaus1({Red, Green}) = 0.75
+m1({Yellow, Green}) = 0.04
+
+m2({Red}) = 0.35
+m2({Yellow}) = 0.25
+m2({Green}) = 0.25
+Bel2({Red, Yellow}) = 0.66
+m2({Red, Green}) = 0.05
+Plaus2({Red, Green}) = 0.75
+m2({Yellow, Green}) = 0.04

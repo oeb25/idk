@@ -1,4 +1,4 @@
-Agents: R,Y,G
+States: {R,Y,G}
 
 m({R}) = 0.1
 m({Y}) = 0.1

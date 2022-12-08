@@ -1,0 +1,7 @@
+States: {hep,cirr,rest}
+
+m1({hep}) = 0.8
+m1({hep,cirr,rest}) = 0.2
+
+m2({hep,cirr}) = 0.6
+m2({hep,cirr,rest}) = 0.4
