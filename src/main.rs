@@ -1,6 +1,7 @@
 mod common;
 mod epi;
 mod epi_ast;
+mod gt;
 mod parse;
 mod prob;
 mod prob_ast;
@@ -16,6 +17,7 @@ use miette::{Context, IntoDiagnostic};
 enum Cli {
     Prob { path: PathBuf },
     Epi { path: PathBuf },
+    Gt { path: PathBuf },
 }
 
 fn main() -> miette::Result<()> {
@@ -42,6 +44,13 @@ fn main() -> miette::Result<()> {
             )?;
 
             epi::run(doc);
+        }
+        Cli::Gt { path } => {
+            gt::run(
+                &std::fs::read_to_string(&path)
+                    .into_diagnostic()
+                    .with_context(|| format!("Trying to read {path:?}"))?,
+            )?;
         }
     }
 
