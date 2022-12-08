@@ -137,6 +137,64 @@ impl Setting {
         None
     }
 
+    fn surviving_elimination_of_strict_dominated_strategies(&self) -> Option<Setting> {
+        if self.rows.len() > 1 {
+            let mut remove_row = None;
+
+            for (y, n, row) in self.rows() {
+                if let Some((to_remove, n2, _)) = self.rows().find(|(y2, _, r)| {
+                    if y != *y2 {
+                        row.iter().zip(r).all(|(a, b)| a.0 > b.0)
+                    } else {
+                        false
+                    }
+                }) {
+                    println!(
+                        "Strategy '{n2}' (row {}) is strictly dominated by '{n}'!",
+                        to_remove + 1
+                    );
+                    remove_row = Some(to_remove);
+                    break;
+                }
+            }
+
+            if let Some(y) = remove_row {
+                let mut new = self.clone();
+                new.remove_row(y);
+                return Some(new);
+            }
+        }
+
+        if self.cols().count() > 1 {
+            let mut remove_col = None;
+
+            for (x, n, col) in self.cols() {
+                if let Some((to_remove, n2, _)) = self.cols().find(|(x2, _, r)| {
+                    if x != *x2 {
+                        col.iter().zip(r).all(|(a, b)| a.1 > b.1)
+                    } else {
+                        false
+                    }
+                }) {
+                    println!(
+                        "Strategy '{n2}' (col {}) is strictly dominated by '{n}'!",
+                        to_remove + 1
+                    );
+                    remove_col = Some(to_remove);
+                    break;
+                }
+            }
+
+            if let Some(x) = remove_col {
+                let mut new = self.clone();
+                new.remove_col(x);
+                return Some(new);
+            }
+        }
+
+        None
+    }
+
     fn cells<'a>(&'a self) -> impl Iterator<Item = CellView<'a>> + 'a {
         self.rows
             .iter()
@@ -289,15 +347,33 @@ pub fn run(src: &str) -> miette::Result<()> {
         }
     }
 
-    println!();
-    println!(
-        "{}",
-        Paint::yellow("Computing surviving elimination of weakly dominated strategies:")
-    );
+    {
+        let mut setting = setting.clone();
 
-    while let Some(next) = setting.surviving_elimination_of_weakly_dominated_strategies() {
-        setting = next;
-        println!("{}", setting);
+        println!();
+        println!(
+            "{}",
+            Paint::yellow("Computing surviving elimination of weakly dominated strategies:")
+        );
+
+        while let Some(next) = setting.surviving_elimination_of_weakly_dominated_strategies() {
+            setting = next;
+            println!("{}", setting);
+        }
+    }
+    {
+        let mut setting = setting.clone();
+
+        println!();
+        println!(
+            "{}",
+            Paint::yellow("Computing surviving elimination of strictly dominated strategies:")
+        );
+
+        while let Some(next) = setting.surviving_elimination_of_strict_dominated_strategies() {
+            setting = next;
+            println!("{}", setting);
+        }
     }
 
     Ok(())
