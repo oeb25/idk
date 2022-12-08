@@ -1,0 +1,151 @@
+use crate::common::*;
+use crate::epi_ast::*;
+use crate::epi_ast::TermKind as TK;
+use crate::str_intern;
+use crate::parse::ParseError;
+
+grammar;
+
+extern {
+    type Error = ParseError;
+}
+
+match {
+    r"\s*" => { }, // The default whitespace skipping is disabled an `ignore pattern` is specified
+    r"//[^\n\r]*[\n\r]*" => { }, // Skip `// comments`
+    r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/" => { },  // Skip `/* comments */`
+
+    r"[a-zA-JL-Z0-9_][a-zA-Z_0-9]*",
+    // r"[0-9]+",
+    r#""[^"]*""#,
+
+    "K",
+    "C",
+    "E",
+    "D",
+    "->",
+    "!",
+    "|",
+    "&",
+    "<->",
+    "<-",
+    "@",
+    "#",
+
+    "-",
+    ",",
+    "?",
+    "::",
+    ":",
+    ":=",
+    "!=",
+    "(",
+    ")",
+    "{",
+    "}",
+    "*",
+    "/",
+    "&&",
+    "+",
+    "<",
+    "<=",
+    "==",
+    "==>",
+    ">",
+    ">=",
+    "||",
+    "assert",
+    "Bool",
+    "decreases",
+    "else",
+    "ensures",
+    "exists",
+    "false",
+    "forall",
+    "function",
+    "if",
+    "Int",
+    "invariant",
+    "method",
+    "modifies",
+    "old",
+    "requires",
+    "result",
+    "returns",
+    "true",
+    "var",
+    "while",
+}
+
+Sep<S, T>: Vec<T> = {
+    <mut xs:(<T> S)*> <x:T?> => {
+        if let Some(x) = x {
+            xs.push(x);
+        }
+        xs
+    }
+};
+NonEmptySep<S, T>: Vec<T> = {
+    <mut xs:(<T> S)*> <x:T> => {
+        xs.push(x);
+        xs
+    }
+};
+
+pub Document: Document = <items:DocumentItem*> => Document { <> };
+
+Node: Node = Ident => Node(<>);
+Agent: Agent = Ident => Agent(<>);
+Agents: Agents = "{" <Sep<",", Agent>> "}" => Agents(<>);
+RelationType: RelationType = {
+    "->" => RelationType::To,
+    "<-" => RelationType::From,
+    "<->" => RelationType::Between,
+}
+Relation: Relation = Node RelationType Node => Relation(<>);
+
+DocumentItem: DocumentItem = {
+    "@" <Node> ":" <Sep<",", Term>> => DocumentItem::Node(<>),
+    "#" <Agents> <Relation> => DocumentItem::Relation(<>),
+    "?" <Term> => DocumentItem::Query(<>),
+}
+
+TopTerm = Term;
+pub Term: Box<Term> = {
+    #[precedence(level="0")]
+    <p:@L> "true" <q:@R> => TK::Boolean(true).parsed(p, q),
+    <p:@L> "false" <q:@R> => TK::Boolean(false).parsed(p, q),
+    // <p:@L> <i:Integer> <q:@R> => TK::Integer(i).parsed(p, q),
+    <p:@L> <i:Ident> <q:@R> => TK::Var(i).parsed(p, q),
+    "(" <TopTerm> ")",
+    // <p:@L> <f:Ident> "(" <args:Sep<",", TopTerm>> ")" <q:@R> => TK::Call(f, args).parsed(p, q),
+    #[precedence(level="20")]
+    <p:@L> "!" <r:Term> <q:@R> => TK::Neg(r).parsed(p, q),
+    <p:@L> "K" <a:Agent> <r:Term> <q:@R> => TK::K(a, r).parsed(p, q),
+    <p:@L> "C" <a:Agents> <r:Term> <q:@R> => TK::C(a, r).parsed(p, q),
+    <p:@L> "E" <a:Agents> <r:Term> <q:@R> => TK::E(a, r).parsed(p, q),
+    <p:@L> "D" <a:Agents> <r:Term> <q:@R> => TK::D(a, r).parsed(p, q),
+    // #[precedence(level="30")] #[assoc(side="left")]
+    // <p:@L> <l:Term> "*" <r:Term> <q:@R> => TK::Binary(l, Op::Times, r).parsed(p, q),
+    // <p:@L> <l:Term> "/" <r:Term> <q:@R> => TK::Binary(l, Op::Divide, r).parsed(p, q),
+    // #[precedence(level="40")] #[assoc(side="left")]
+    // <p:@L> <l:Term> "+" <r:Term> <q:@R> => TK::Binary(l, Op::Plus, r).parsed(p, q),
+    // <p:@L> <l:Term> "-" <r:Term> <q:@R> => TK::Binary(l, Op::Minus, r).parsed(p, q),
+    // #[precedence(level="50")] #[assoc(side="left")]
+    // <p:@L> <l:Term> "<=" <r:Term> <q:@R> => TK::Binary(l, Op::Leq, r).parsed(p, q),
+    // <p:@L> <l:Term> "<" <r:Term> <q:@R> => TK::Binary(l, Op::Lt, r).parsed(p, q),
+    // <p:@L> <l:Term> ">=" <r:Term> <q:@R> => TK::Binary(l, Op::Geq, r).parsed(p, q),
+    // <p:@L> <l:Term> ">" <r:Term> <q:@R> => TK::Binary(l, Op::Gt, r).parsed(p, q),
+    // <p:@L> <l:Term> "==" <r:Term> <q:@R> => TK::Binary(l, Op::Eq, r).parsed(p, q),
+    // <p:@L> <l:Term> "!=" <r:Term> <q:@R> => TK::Binary(l, Op::Neq, r).parsed(p, q),
+    #[precedence(level="70")] #[assoc(side="left")]
+    <p:@L> <l:Term> "|" <r:Term> <q:@R> => TK::Dis(l, r).parsed(p, q),
+    #[precedence(level="71")] #[assoc(side="left")]
+    <p:@L> <l:Term> "&" <r:Term> <q:@R> => TK::Con(l, r).parsed(p, q),
+    #[precedence(level="80")] #[assoc(side="left")]
+    <p:@L> <l:Term> "==>" <r:Term> <q:@R> => TK::Imp(l, r).parsed(p, q),
+    <p:@L> <l:Term> "->" <r:Term> <q:@R> => TK::Imp(l, r).parsed(p, q),
+}
+
+// Integer: &'static str = r"[0-9]+" => str_intern::intern(<>);
+Ident: Ident = <l:@L> <i:r"[a-zA-JL-Z0-9_][a-zA-Z_0-9]*"> <r:@R> => Ident::new(i, Span::start_end(l, r));
