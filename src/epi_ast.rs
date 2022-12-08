@@ -1,7 +1,4 @@
-use crate::{
-    common::{Ident, Span},
-    str_intern,
-};
+use crate::common::{Ident, Span};
 use itertools::Itertools;
 
 #[derive(Debug, Clone, derive_more::Display)]

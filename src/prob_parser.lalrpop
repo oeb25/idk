@@ -23,6 +23,7 @@ match {
     r"\.[0-9]+",
     r#""[^"]*""#,
 
+    "Agents",
     "=",
     "K",
     "C",
@@ -100,6 +101,7 @@ NonEmptySep<S, T>: Vec<T> = {
 pub Facts: Vec<Fact> = Fact*;
 
 Fact: Fact = {
+    "Agents" ":" <Sep<",", State>> => Fact::Agents(<>),
     "m" "(" <States> ")" "=" <Float> => Fact::M(<>),
     "Bel" "(" <States> ")" "=" <Float> => Fact::Bel(<>),
     "Plaus" "(" <States> ")" "=" <Float> => Fact::Plaus(<>),
