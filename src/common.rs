@@ -143,3 +143,31 @@ impl From<Ident> for miette::SourceSpan {
         i.span.into()
     }
 }
+
+pub fn real_to_f64(r: &z3::ast::Real) -> Option<f64> {
+    let (a, b) = r.as_real()?;
+    Some(a as f64 / b as f64)
+}
+pub fn real<'ctx>(ctx: &'ctx z3::Context, f: f64) -> z3::ast::Real<'ctx> {
+    let (a, b) = approximate_rational(f);
+    z3::ast::Real::from_real(ctx, a, b)
+}
+pub fn approximate_rational(f: f64) -> (i32, i32) {
+    let sign = f.signum();
+    let f = f.abs();
+
+    let mut a = 0;
+    let mut b = 1;
+
+    while (((a as f64) / (b as f64)) - f).abs() > f64::EPSILON {
+        let delta = (a as f64) / (b as f64);
+
+        match delta.partial_cmp(&f).unwrap() {
+            std::cmp::Ordering::Less => a += 1,
+            std::cmp::Ordering::Equal => break,
+            std::cmp::Ordering::Greater => b += 1,
+        }
+    }
+
+    (a * sign as i32, b)
+}

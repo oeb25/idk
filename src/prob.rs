@@ -7,7 +7,10 @@ use z3::{
     Config, Context, FuncDecl, Model, Solver, Sort,
 };
 
-use crate::prob_ast::Fact;
+use crate::{
+    common::{real, real_to_f64},
+    prob_ast::Fact,
+};
 
 pub fn start(facts: &[Fact]) -> miette::Result<()> {
     let cfg = Config::new();
@@ -386,10 +389,6 @@ fn create_fn_group<'a>(ctx: &'a Context, n: usize, suffix: &str) -> FnGroup<'a> 
     FnGroup { m, bel, plaus }
 }
 
-fn real<'ctx>(ctx: &'ctx Context, f: f64) -> Real<'ctx> {
-    let (a, b) = approximate_rational(f);
-    Real::from_real(ctx, a, b)
-}
 fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
     let mut suffixes = vec![];
     let mut sort_order = None;
@@ -468,29 +467,4 @@ fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
     }
 
     Ok(())
-}
-
-fn real_to_f64(r: &Real) -> Option<f64> {
-    let (a, b) = r.as_real()?;
-    Some(a as f64 / b as f64)
-}
-
-fn approximate_rational(f: f64) -> (i32, i32) {
-    let sign = f.signum();
-    let f = f.abs();
-
-    let mut a = 0;
-    let mut b = 1;
-
-    while (((a as f64) / (b as f64)) - f).abs() > f64::EPSILON {
-        let delta = (a as f64) / (b as f64);
-
-        match delta.partial_cmp(&f).unwrap() {
-            std::cmp::Ordering::Less => a += 1,
-            std::cmp::Ordering::Equal => break,
-            std::cmp::Ordering::Greater => b += 1,
-        }
-    }
-
-    (a * sign as i32, b)
 }

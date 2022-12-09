@@ -2,6 +2,9 @@ use comfy_table::Table;
 use itertools::Itertools;
 use miette::{Context, IntoDiagnostic};
 use yansi::Paint;
+use z3::ast::Ast;
+
+use crate::common::{real, real_to_f64};
 
 #[derive(Debug, PartialEq, Clone)]
 struct Setting {
@@ -254,6 +257,98 @@ impl Setting {
 
         (l, r)
     }
+
+    /// Computes the mixed strategy ratios for a 2x2 game
+    fn mixed_strategy(&self) -> Option<(Vec<(i64, i64)>, Vec<(i64, i64)>)> {
+        let cfg = z3::Config::new();
+        let ctx = z3::Context::new(&cfg);
+
+        let solver = z3::Solver::new(&ctx);
+
+        let ps = (0..self.cols().count())
+            .map(|idx| z3::ast::Real::new_const(&ctx, format!("p{idx}")))
+            .collect_vec();
+        let qs = (0..self.rows().count())
+            .map(|idx| z3::ast::Real::new_const(&ctx, format!("q{idx}")))
+            .collect_vec();
+
+        for c in ps.iter().chain(&qs) {
+            solver.assert(&(real(&ctx, 0.0).le(&c) & c.le(&real(&ctx, 1.0))));
+        }
+
+        solver.assert(
+            &ps.iter()
+                .cloned()
+                .reduce(|a, b| a + b)
+                .unwrap()
+                ._eq(&real(&ctx, 1.0)),
+        );
+        solver.assert(
+            &qs.iter()
+                .cloned()
+                .reduce(|a, b| a + b)
+                .unwrap()
+                ._eq(&real(&ctx, 1.0)),
+        );
+
+        let values_1 = self
+            .cols()
+            .map(|(_, _, data)| {
+                data.iter()
+                    .zip(&ps)
+                    .map(|(l, r)| real(&ctx, l.0) * r)
+                    .reduce(|a, b| a + b)
+                    .unwrap_or_else(|| real(&ctx, 0.0))
+            })
+            .collect_vec();
+        let values_2 = self
+            .rows()
+            .map(|(_, _, data)| {
+                data.iter()
+                    .zip(&qs)
+                    .map(|(l, r)| real(&ctx, l.1) * r)
+                    .reduce(|a, b| a + b)
+                    .unwrap_or_else(|| real(&ctx, 0.0))
+            })
+            .collect_vec();
+
+        let eq_1 = values_1
+            .iter()
+            .tuple_windows()
+            .map(|(a, b)| a._eq(b))
+            .reduce(|a, b| a & b)
+            .unwrap();
+        let eq_2 = values_2
+            .iter()
+            .tuple_windows()
+            .map(|(a, b)| a._eq(b))
+            .reduce(|a, b| a & b)
+            .unwrap();
+
+        solver.assert(&eq_1);
+        solver.assert(&eq_2);
+
+        match solver.check() {
+            z3::SatResult::Unsat => None,
+            z3::SatResult::Unknown => None,
+            z3::SatResult::Sat => {
+                let model = solver.get_model().unwrap();
+
+                let prep = |x: z3::ast::Real| x.as_real().unwrap();
+
+                let ps = ps
+                    .iter()
+                    .map(|p| prep(model.eval(p, true).unwrap()))
+                    .collect_vec();
+                let qs = qs
+                    .iter()
+                    .map(|q| prep(model.eval(q, true).unwrap()))
+                    .collect_vec();
+
+                Some((ps, qs))
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -290,12 +385,21 @@ impl std::fmt::Display for Setting {
             ContentArrangement,
         };
 
+        let probabilities = self.mixed_strategy();
+
         let mut table = Table::new();
         table
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_content_arrangement(ContentArrangement::Dynamic);
         let mut header = self.header.clone();
+
+        if let Some((_, qs)) = &probabilities {
+            for (h, q) in header.iter_mut().zip(qs) {
+                *h += &format!(" [{}/{}]", q.0, q.1);
+            }
+        }
+
         header.insert(0, String::new());
         table.set_header(header.iter().map(|h| {
             Cell::new(h)
@@ -304,25 +408,34 @@ impl std::fmt::Display for Setting {
         }));
 
         for (row, (n, data)) in self.rows.iter().enumerate() {
+            let n = if let Some((ps, _)) = &probabilities {
+                let p = ps[row];
+                format!("{n} [{}/{}]", p.0, p.1)
+            } else {
+                n.to_string()
+            };
+
             table.add_row(
                 std::iter::once(Cell::new(n).add_attribute(Attribute::Bold)).chain(
                     data.iter().enumerate().map(|(col, (l, r))| {
                         let (a, b) = self.is_nash(row, col);
-                        let mut attrs = vec![];
 
-                        if a && b {
-                            attrs.push(Attribute::Underlined);
-                        }
-                        if self.is_pareto_optimum(row, col) {
-                            attrs.push(Attribute::Bold);
-                        }
-
-                        Cell::new(format!(
+                        let cell = Cell::new(format!(
                             "{l}{},{r}{}",
                             if a { "*" } else { "" },
                             if b { "*" } else { "" }
-                        ))
-                        .add_attributes(attrs)
+                        ));
+
+                        match (a && b, self.is_pareto_optimum(row, col)) {
+                            (true, true) => cell
+                                .fg(comfy_table::Color::Yellow)
+                                .add_attributes(vec![Attribute::Underlined, Attribute::Bold]),
+                            (true, false) => cell
+                                .fg(comfy_table::Color::Blue)
+                                .add_attributes(vec![Attribute::Underlined]),
+                            (false, true) => cell.fg(comfy_table::Color::Red),
+                            (false, false) => cell,
+                        }
                     }),
                 ),
             );
@@ -337,12 +450,31 @@ pub fn run(src: &str) -> miette::Result<()> {
     println!("{}", setting);
 
     println!(
+        "{} {} {}",
+        Paint::blue("[Pure nash]").underline(),
+        Paint::red("[Pareto optimum]"),
+        Paint::yellow("[Both]").bold().underline()
+    );
+
+    println!();
+
+    if setting.mixed_strategy().is_none() {
+        println!(
+            "{}\n",
+            Paint::red("No mixed-strategy Nash Equilibrium exists")
+                .bold()
+                .underline()
+                .italic(),
+        );
+    }
+
+    println!(
         "{} {}",
         Paint::cyan("Pure nash equilibrium:"),
         setting
             .cells()
             .filter(|c| setting.is_nash(c.row, c.col) == (true, true))
-            .map(|c| Paint::new(format!("({},{})", c.row_strategy, c.col_strategy)).underline())
+            .map(|c| Paint::blue(format!("({},{})", c.row_strategy, c.col_strategy)).underline())
             .format(", ")
     );
     println!(
@@ -350,7 +482,7 @@ pub fn run(src: &str) -> miette::Result<()> {
         Paint::cyan("Pareto optimum:"),
         setting
             .pareto_optimum()
-            .map(|c| Paint::new(format!("({},{})", c.row_strategy, c.col_strategy)).bold())
+            .map(|c| Paint::red(format!("({},{})", c.row_strategy, c.col_strategy)))
             .format(", ")
     );
 
