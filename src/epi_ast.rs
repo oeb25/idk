@@ -89,6 +89,8 @@ pub enum TermKind {
     EBounded(u32, Agents, Box<Term>),
     #[display(fmt = "(D{_0}{_1})")]
     D(Agents, Box<Term>),
+    #[display(fmt = "[!{_0}]{_1}")]
+    PublicAnnouncement(Box<Term>, Box<Term>),
     #[display(fmt = "({_0} & {_1})")]
     Con(Box<Term>, Box<Term>),
     #[display(fmt = "({_0} | {_1})")]

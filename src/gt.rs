@@ -89,13 +89,14 @@ impl Setting {
     }
 
     fn surviving_elimination_of_weakly_dominated_strategies(&self) -> Option<Setting> {
+        let mut remove_row = None;
+        let mut remove_col = None;
         if self.rows.len() > 1 {
-            let mut remove_row = None;
-
             for (y, n, row) in self.rows() {
                 if self.rows().all(|(y2, _, r)| {
                     if y != y2 {
-                        row.iter().zip(r).all(|(a, b)| a.0 < b.0)
+                        row.iter().zip(&r).any(|(a, b)| a.0 < b.0)
+                            && row.iter().zip(r).all(|(a, b)| a.0 <= b.0)
                     } else {
                         true
                     }
@@ -105,21 +106,14 @@ impl Setting {
                     break;
                 }
             }
-
-            if let Some(y) = remove_row {
-                let mut new = self.clone();
-                new.remove_row(y);
-                return Some(new);
-            }
         }
 
         if self.cols().count() > 1 {
-            let mut remove_col = None;
-
             for (x, n, col) in self.cols() {
                 if self.cols().all(|(x2, _, r)| {
                     if x != x2 {
-                        col.iter().zip(r).all(|(a, b)| a.1 < b.1)
+                        col.iter().zip(&r).any(|(a, b)| a.1 < b.1)
+                            && col.iter().zip(r).all(|(a, b)| a.1 <= b.1)
                     } else {
                         true
                     }
@@ -129,15 +123,27 @@ impl Setting {
                     break;
                 }
             }
-
-            if let Some(x) = remove_col {
-                let mut new = self.clone();
-                new.remove_col(x);
-                return Some(new);
-            }
         }
 
-        None
+        match (remove_row, remove_col) {
+            (None, None) => None,
+            (None, Some(remove_col)) => {
+                let mut new = self.clone();
+                new.remove_col(remove_col);
+                Some(new)
+            }
+            (Some(remove_row), None) => {
+                let mut new = self.clone();
+                new.remove_row(remove_row);
+                Some(new)
+            }
+            (Some(remove_row), Some(remove_col)) => {
+                let mut new = self.clone();
+                new.remove_row(remove_row);
+                new.remove_col(remove_col);
+                Some(new)
+            }
+        }
     }
 
     fn surviving_elimination_of_strict_dominated_strategies(&self) -> Option<Setting> {
@@ -260,6 +266,10 @@ impl Setting {
 
     /// Computes the mixed strategy ratios for a 2x2 game
     fn mixed_strategy(&self) -> Option<(Vec<(i64, i64)>, Vec<(i64, i64)>)> {
+        if self.cols().count() < 2 || self.rows().count() < 2 {
+            return None;
+        }
+
         let cfg = z3::Config::new();
         let ctx = z3::Context::new(&cfg);
 
@@ -296,7 +306,7 @@ impl Setting {
             .map(|(_, _, data)| {
                 data.iter()
                     .zip(&ps)
-                    .map(|(l, r)| real(&ctx, l.0) * r)
+                    .map(|(l, r)| real(&ctx, l.1) * r)
                     .reduce(|a, b| a + b)
                     .unwrap_or_else(|| real(&ctx, 0.0))
             })
@@ -306,7 +316,7 @@ impl Setting {
             .map(|(_, _, data)| {
                 data.iter()
                     .zip(&qs)
-                    .map(|(l, r)| real(&ctx, l.1) * r)
+                    .map(|(l, r)| real(&ctx, l.0) * r)
                     .reduce(|a, b| a + b)
                     .unwrap_or_else(|| real(&ctx, 0.0))
             })

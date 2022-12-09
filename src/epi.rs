@@ -212,6 +212,13 @@ impl Model {
                     todo!()
                 }
             }
+            TK::PublicAnnouncement(a, b) => {
+                if self.models(n, a) {
+                    self.update_with(a).models(n, b)
+                } else {
+                    true
+                }
+            }
             TK::Con(l, r) => self.models(n, l) && self.models(n, r),
             TK::Dis(l, r) => self.models(n, l) || self.models(n, r),
             TK::Imp(l, r) => {
@@ -222,6 +229,39 @@ impl Model {
                 }
             }
         }
+    }
+
+    pub fn update_with(&self, a: &Term) -> Model {
+        Model {
+            nodes: self
+                .nodes
+                .iter()
+                .filter_map(|(n, ns)| {
+                    if self.models(*n, a) {
+                        Some((*n, ns.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        }
+        // Model {
+        //     nodes: self
+        //         .nodes
+        //         .iter()
+        //         .map(|(n, ns)| {
+        //             let mut new_facts = ns.facts.clone();
+        //             new_facts.push(Box::new(a.clone()));
+        //             (
+        //                 *n,
+        //                 NodeState {
+        //                     facts: new_facts,
+        //                     relations: ns.relations.clone(),
+        //                 },
+        //             )
+        //         })
+        //         .collect(),
+        // }
     }
 }
 
@@ -237,7 +277,12 @@ impl Term {
             TK::Con(l, r) => l.to_z3(ctx) | r.to_z3(ctx),
             TK::Dis(l, r) => l.to_z3(ctx) & r.to_z3(ctx),
             TK::Imp(l, r) => l.to_z3(ctx).implies(&r.to_z3(ctx)),
-            TK::K(_, _) | TK::C(_, _) | TK::E(_, _) | TK::EBounded(_, _, _) | TK::D(_, _) => {
+            TK::K(_, _)
+            | TK::C(_, _)
+            | TK::E(_, _)
+            | TK::EBounded(_, _, _)
+            | TK::D(_, _)
+            | TK::PublicAnnouncement(_, _) => {
                 todo!("Could not convert {self} to z3")
             }
         }
@@ -253,7 +298,7 @@ impl Term {
             TK::K(_, i) | TK::C(_, i) | TK::E(_, i) | TK::EBounded(_, _, i) | TK::D(_, i) => {
                 i.all_vars()
             }
-            TK::Con(l, r) | TK::Dis(l, r) | TK::Imp(l, r) => {
+            TK::PublicAnnouncement(l, r) | TK::Con(l, r) | TK::Dis(l, r) | TK::Imp(l, r) => {
                 l.all_vars().union(&r.all_vars()).copied().collect()
             }
         }

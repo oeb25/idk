@@ -31,6 +31,8 @@ match {
     "<-",
     "@",
     "#",
+    "[",
+    "]",
 
     "-",
     ",",
@@ -125,6 +127,8 @@ pub Term: Box<Term> = {
     <p:@L> "C" <a:Agents> <r:Term> <q:@R> => TK::C(a, r).parsed(p, q),
     <p:@L> "E" <a:Agents> <r:Term> <q:@R> => TK::E(a, r).parsed(p, q),
     <p:@L> "D" <a:Agents> <r:Term> <q:@R> => TK::D(a, r).parsed(p, q),
+    <p:@L> "[" "!" <a:TopTerm> "]" <b:Term> <q:@R> => TK::PublicAnnouncement(a, b).parsed(p, q),
+    // <p:@L> "<" "!" <a:TopTerm> ">" <b:Term> <q:@R> => TK::PublicAnnouncement(a, b).parsed(p, q),
     // #[precedence(level="30")] #[assoc(side="left")]
     // <p:@L> <l:Term> "*" <r:Term> <q:@R> => TK::Binary(l, Op::Times, r).parsed(p, q),
     // <p:@L> <l:Term> "/" <r:Term> <q:@R> => TK::Binary(l, Op::Divide, r).parsed(p, q),
