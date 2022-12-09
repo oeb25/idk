@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
-
 use comfy_table::Table;
+use indexmap::IndexMap;
 use itertools::Itertools;
 use yansi::Paint;
 use z3::{
@@ -28,7 +27,7 @@ struct Probability<'a> {
     suffixes: Vec<&'static str>,
     names: Vec<String>,
     all: Vec<(u64, BV<'a>)>,
-    fns: HashMap<&'static str, FnGroup<'a>>,
+    fns: IndexMap<&'static str, FnGroup<'a>>,
 }
 
 impl<'a> Probability<'a> {
@@ -45,7 +44,7 @@ impl<'a> Probability<'a> {
             .map(|f| (f, BV::from_u64(ctx, f, n as _)))
             .collect_vec();
 
-        let mut fns = HashMap::new();
+        let mut fns = IndexMap::new();
         let suffixes = suffixes.into_iter().collect_vec();
 
         for &suffix in &suffixes {

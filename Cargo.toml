@@ -9,6 +9,7 @@ edition = "2021"
 clap = { version = "4.0.29", features = ["derive"] }
 comfy-table = "6.1.3"
 derive_more = "0.99.17"
+indexmap = "1.9.2"
 itertools = "0.10.5"
 lalrpop-util = { version = "0.19.8", features = ["lexer"] }
 miette = { version = "5.5.0", features = ["fancy"] }

@@ -17,7 +17,7 @@ pub enum DocumentItem {
     Query(Box<Term>),
 }
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, derive_more::Display)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[display(fmt = "{_0}")]
 pub struct Node(pub Ident);
 

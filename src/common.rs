@@ -121,6 +121,16 @@ impl PartialEq for Ident {
         self.text == other.text
     }
 }
+impl PartialOrd for Ident {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.text.partial_cmp(&other.text)
+    }
+}
+impl Ord for Ident {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
 impl std::ops::Deref for Ident {
     type Target = str;
 

@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet};
-
+use indexmap::{IndexMap, IndexSet};
 use itertools::Itertools;
 
 use crate::{
@@ -39,27 +38,55 @@ pub fn run(doc: Document) {
         }
     }
 
-    for q in &queries {
-        let res = model.query(q);
+    use comfy_table::{
+        modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Attribute, Cell, CellAlignment,
+        ContentArrangement, Table,
+    };
 
-        println!("{q}:");
-        println!("~> {}", res.iter().format(", "));
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+
+    let nodes = model.nodes.keys().sorted().collect_vec();
+
+    table.set_header(std::iter::once(Cell::new("")).chain(nodes.iter().map(|s| {
+        Cell::new(s)
+            .add_attribute(Attribute::Bold)
+            .set_alignment(CellAlignment::Center)
+    })));
+
+    for q in &queries {
+        table.add_row(
+            std::iter::once(Cell::new(format!("{q}"))).chain(nodes.iter().map(|n| {
+                let v = model.models(**n, q);
+                let mut attrs = vec![];
+                if v {
+                    attrs.push(Attribute::Bold);
+                } else {
+                    attrs.push(Attribute::Dim);
+                }
+                Cell::new(v).add_attributes(attrs)
+            })),
+        );
     }
+    println!("{table}");
 }
 
 #[derive(Debug, Clone, Default)]
 struct NodeState {
     facts: Vec<Box<Term>>,
-    relations: HashMap<Agent, HashSet<Node>>,
+    relations: IndexMap<Agent, IndexSet<Node>>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct Model {
-    nodes: HashMap<Node, NodeState>,
+    nodes: IndexMap<Node, NodeState>,
 }
 
 impl Model {
-    fn query(&self, t: &Term) -> HashSet<Node> {
+    fn query(&self, t: &Term) -> IndexSet<Node> {
         self.nodes
             .keys()
             .copied()
@@ -104,7 +131,7 @@ impl Model {
 
                     let cond = pre.implies(&t.to_z3(&ctx));
 
-                    let all_vars: HashSet<_> = ns
+                    let all_vars: IndexSet<_> = ns
                         .facts
                         .iter()
                         .flat_map(|fact| fact.all_vars())
@@ -216,7 +243,7 @@ impl Term {
         }
     }
 
-    fn all_vars(&self) -> HashSet<Ident> {
+    fn all_vars(&self) -> IndexSet<Ident> {
         use crate::epi_ast::TermKind as TK;
 
         match &self.kind {
