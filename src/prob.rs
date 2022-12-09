@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use comfy_table::Table;
 use itertools::Itertools;
+use yansi::Paint;
 use z3::{
     ast::{Ast, Real, BV},
     Config, Context, FuncDecl, Model, Solver, Sort,
@@ -250,23 +251,48 @@ impl<'a> Probability<'a> {
     }
 
     fn table(&self, suffix: &str, model: &Model) -> Table {
+        use comfy_table::{
+            modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Attribute, Cell, CellAlignment,
+            ContentArrangement,
+        };
+
         let mut table = Table::new();
-        table.set_header([
-            "X".to_string(),
-            format!("m{suffix}(X)"),
-            format!("Bel{suffix}(X)"),
-            format!("Plaus{suffix}(X)"),
-        ]);
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(
+            [
+                "X".to_string(),
+                format!("m{suffix}(X)"),
+                format!("Bel{suffix}(X)"),
+                format!("Plaus{suffix}(X)"),
+            ]
+            .map(|c| {
+                Cell::new(c)
+                    .add_attribute(Attribute::Bold)
+                    .set_alignment(CellAlignment::Center)
+            }),
+        );
 
         for idx in (1..1i64 << self.n()).sorted_by_key(|s| s.count_ones()) {
             let bv = BV::from_i64(self.ctx, idx, self.n());
 
-            table.add_row([
-                self.compute_name(idx as _),
-                self.compute_m(model, suffix, &bv).unwrap().to_string(),
-                self.compute_bel(model, suffix, &bv).unwrap().to_string(),
-                self.compute_plaus(model, suffix, &bv).unwrap().to_string(),
-            ]);
+            table.add_row(
+                [
+                    self.compute_name(idx as _),
+                    self.compute_m(model, suffix, &bv).unwrap().to_string(),
+                    self.compute_bel(model, suffix, &bv).unwrap().to_string(),
+                    self.compute_plaus(model, suffix, &bv).unwrap().to_string(),
+                ]
+                .map(|s| {
+                    Cell::new(&s).add_attribute(if s == "0" {
+                        Attribute::Dim
+                    } else {
+                        Attribute::NormalIntensity
+                    })
+                }),
+            );
         }
 
         table
@@ -366,7 +392,7 @@ fn real<'ctx>(ctx: &'ctx Context, f: f64) -> Real<'ctx> {
     Real::from_real(ctx, a, b)
 }
 fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
-    let mut suffixes = HashSet::new();
+    let mut suffixes = vec![];
     let mut sort_order = None;
 
     let mut states = facts
@@ -377,7 +403,9 @@ fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
                 &states.0
             }
             Fact::M(suf, states, _) | Fact::Bel(suf, states, _) | Fact::Plaus(suf, states, _) => {
-                suffixes.insert(suf.text());
+                if !suffixes.contains(&suf.text()) {
+                    suffixes.push(suf.text());
+                }
                 &states.0
             }
         })
@@ -429,10 +457,13 @@ fn run(ctx: &Context, facts: &[Fact]) -> miette::Result<()> {
         .tuple_combinations()
         .collect_vec()
     {
+        println!(
+            "{}",
+            Paint::yellow(format!("Computed combination of m{a} ⊕ m{b}:"))
+        );
         let ab = p.compute_combination(&solver, &model, a, b);
         dbg!(solver.check());
         let model = solver.get_model().expect("no model generated");
-        println!("Computed combination of {a} and {b}");
         let table = p.table(ab, &model);
         println!("{table}");
     }

@@ -1,5 +1,3 @@
-use std::collections::btree_map::Range;
-
 use crate::str_intern;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,10 +94,6 @@ impl Ident {
     pub fn span(self) -> Span {
         self.span
     }
-    // /// Creates a new `var` expression.
-    // pub fn var(self, ty: Type) -> &'static Expr {
-    //     Expr::Var(self).register(ty, self.span, None)
-    // }
     pub fn skip(self, n: usize) -> Ident {
         Ident::new(
             &self.text()[n..],

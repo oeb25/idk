@@ -219,11 +219,15 @@ impl Setting {
         })
     }
 
+    fn is_pareto_optimum(&self, row: usize, col: usize) -> bool {
+        self.pareto_improvements(row, col).count() == 0
+    }
+
     fn pareto_optimum(&self) -> impl Iterator<Item = CellView> {
         // If there is no outcome that every agent finds at least as
         // good and at least one agent finds better
         self.cells()
-            .filter(|c1| self.pareto_improvements(c1.row, c1.col).count() == 0)
+            .filter(|c| self.is_pareto_optimum(c.row, c.col))
     }
 
     fn cell_at(&self, row: usize, col: usize) -> CellView {
@@ -281,23 +285,46 @@ impl<'a> CellView<'a> {
 
 impl std::fmt::Display for Setting {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use comfy_table::{
+            modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Attribute, Cell, CellAlignment,
+            ContentArrangement,
+        };
+
         let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::Dynamic);
         let mut header = self.header.clone();
         header.insert(0, String::new());
-        table.set_header(header);
+        table.set_header(header.iter().map(|h| {
+            Cell::new(h)
+                .add_attribute(Attribute::Bold)
+                .set_alignment(CellAlignment::Center)
+        }));
 
         for (row, (n, data)) in self.rows.iter().enumerate() {
             table.add_row(
-                std::iter::once(n.to_string()).chain(data.iter().enumerate().map(
-                    |(col, (l, r))| {
+                std::iter::once(Cell::new(n).add_attribute(Attribute::Bold)).chain(
+                    data.iter().enumerate().map(|(col, (l, r))| {
                         let (a, b) = self.is_nash(row, col);
-                        format!(
+                        let mut attrs = vec![];
+
+                        if a && b {
+                            attrs.push(Attribute::Underlined);
+                        }
+                        if self.is_pareto_optimum(row, col) {
+                            attrs.push(Attribute::Bold);
+                        }
+
+                        Cell::new(format!(
                             "{l}{},{r}{}",
                             if a { "*" } else { "" },
                             if b { "*" } else { "" }
-                        )
-                    },
-                )),
+                        ))
+                        .add_attributes(attrs)
+                    }),
+                ),
             );
         }
 
@@ -306,7 +333,7 @@ impl std::fmt::Display for Setting {
 }
 
 pub fn run(src: &str) -> miette::Result<()> {
-    let mut setting = Setting::parse(src)?;
+    let setting = Setting::parse(src)?;
     println!("{}", setting);
 
     println!(
@@ -315,7 +342,7 @@ pub fn run(src: &str) -> miette::Result<()> {
         setting
             .cells()
             .filter(|c| setting.is_nash(c.row, c.col) == (true, true))
-            .map(|c| format!("({},{})", c.row_strategy, c.col_strategy))
+            .map(|c| Paint::new(format!("({},{})", c.row_strategy, c.col_strategy)).underline())
             .format(", ")
     );
     println!(
@@ -323,7 +350,7 @@ pub fn run(src: &str) -> miette::Result<()> {
         Paint::cyan("Pareto optimum:"),
         setting
             .pareto_optimum()
-            .map(|c| format!("({},{})", c.row_strategy, c.col_strategy))
+            .map(|c| Paint::new(format!("({},{})", c.row_strategy, c.col_strategy)).bold())
             .format(", ")
     );
 
@@ -339,8 +366,10 @@ pub fn run(src: &str) -> miette::Result<()> {
 
         if imp.is_empty() {
             println!(
-                "  ({},{}): has no improvements",
-                c.row_strategy, c.col_strategy
+                "  ({},{}): {}",
+                c.row_strategy,
+                c.col_strategy,
+                Paint::new("has no improvements").dimmed()
             );
         } else {
             println!("  ({},{}): {imp}", c.row_strategy, c.col_strategy)

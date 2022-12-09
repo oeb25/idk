@@ -1,0 +1,6 @@
+States: {w,w2}
+
+Bel({w}) = 0.2
+Bel({w2}) = 0
+Bel({w,w2}) = 1
+Bel({}) = 0

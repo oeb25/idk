@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use itertools::Itertools;
 use miette::{Context, IntoDiagnostic};
+use yansi::Paint;
 
 #[derive(Parser)]
 enum Cli {
@@ -31,7 +32,7 @@ fn main() -> miette::Result<()> {
                     .with_context(|| format!("Trying to read {path:?}"))?,
             )?;
 
-            println!("Parsed input:");
+            println!("{}", Paint::yellow("Parsed input:"));
             println!("  {}", facts.iter().format("\n  "));
 
             prob::start(&facts)?;
